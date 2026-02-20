@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
+<title>Ride-Replay 3D</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0a0f; --surface:#13131a; --border:#1e1e2e;
+  --accent:#e8ff47; --accent2:#ff6b35; --text:#e8e8f0; --muted:#5a5a72;
+  --hr-col:#ff4466;
+  --header:52px;
+  --panel-peek:72px; /* 閉じているときのパネル見え幅 */
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;}
+
+/* ══ HEADER ══ */
+header{
+  position:fixed;top:0;left:0;right:0;z-index:1000;
+  height:var(--header);
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 16px;
+  background:rgba(10,10,15,0.97);border-bottom:1px solid var(--border);
+}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:3px;color:var(--accent);}
+.logo em{color:var(--accent2);font-style:normal;}
+.badge{font-size:9px;color:#6c6;letter-spacing:1px;background:rgba(40,80,40,0.3);border:1px solid rgba(60,120,60,0.4);padding:3px 10px;border-radius:20px;}
+
+/* ══ MAP (全画面) ══ */
+#map{
+  position:fixed;
+  top:var(--header);left:0;right:0;
+  bottom:var(--panel-peek);
+  z-index:1;
+}
+.leaflet-container{background:#1a1a2a!important;}
+
+/* ══ PLACEHOLDER ══ */
+.placeholder{
+  position:fixed;top:var(--header);left:0;right:0;bottom:var(--panel-peek);
+  z-index:400;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;
+  background:radial-gradient(ellipse at 50% 40%,#13131a,#0a0a0f);
+  transition:opacity 0.4s;
+}
+.placeholder.hidden{opacity:0;pointer-events:none;}
+.big-icon{font-size:56px;opacity:0.2;animation:pulse 3s ease-in-out infinite;}
+.placeholder p{color:var(--muted);font-size:13px;text-align:center;line-height:1.8;}
+@keyframes pulse{0%,100%{transform:scale(1);opacity:0.2;}50%{transform:scale(1.06);opacity:0.35;}}
+
+/* ══ アバターパネル（地図上、左上） ══ */
+.av-float{
+  position:fixed;top:calc(var(--header) + 10px);left:10px;
+  z-index:800;display:none;
+}
+.av-float.on{display:block;}
+.av-card{
+  background:rgba(8,8,14,0.88);
+  border:1px solid var(--border);border-radius:14px;
+  padding:10px 14px;backdrop-filter:blur(16px);
+  text-align:center;min-width:110px;
+  display:flex;flex-direction:column;gap:6px;
+}
+.av-emoji-lg{font-size:36px;line-height:1.1;transition:all 0.6s;}
+.av-sep{height:1px;background:var(--border);}
+.av-hr-row{display:flex;align-items:center;justify-content:center;gap:4px;}
+.av-hr-icon{font-size:12px;animation:hb 0.8s ease-in-out infinite;}
+@keyframes hb{0%,100%{transform:scale(1);}40%{transform:scale(1.35);}}
+.av-hr-val{font-family:'Bebas Neue',sans-serif;font-size:26px;color:var(--hr-col);line-height:1;}
+.av-hr-unit{font-size:9px;color:var(--muted);}
+.av-spd-row{display:flex;align-items:baseline;justify-content:center;gap:3px;}
+.av-spd-val{font-family:'Bebas Neue',sans-serif;font-size:30px;color:var(--accent);line-height:1;}
+.av-spd-unit{font-size:9px;color:var(--muted);}
+.av-status{font-size:10px;color:var(--muted);}
+
+/* ══ 下部スライドパネル ══ */
+.bottom-panel{
+  position:fixed;left:0;right:0;bottom:0;
+  z-index:900;
+  background:var(--surface);
+  border-top:1px solid var(--border);
+  border-radius:18px 18px 0 0;
+  transition:transform 0.35s cubic-bezier(.4,0,.2,1);
+  /* 閉じているとき: パネルのpeek分だけ見える */
+  transform:translateY(calc(100% - var(--panel-peek)));
+}
+.bottom-panel.open{transform:translateY(0);}
+
+/* ドラッグハンドル */
+.panel-handle{
+  display:flex;flex-direction:column;align-items:center;
+  padding:10px 0 6px;cursor:pointer;user-select:none;
+}
+.handle-bar{width:40px;height:4px;background:var(--border);border-radius:2px;}
+.handle-label{font-size:10px;color:var(--muted);margin-top:4px;letter-spacing:1px;}
+
+/* パネル内コンテンツ */
+.panel-content{
+  padding:0 16px 32px;
+  display:flex;flex-direction:column;gap:12px;
+  max-height:70vh;overflow-y:auto;
+}
+.panel-content::-webkit-scrollbar{display:none;}
+
+/* ── プログレス（peekエリアに常時表示） ── */
+.peek-area{
+  padding:0 16px 8px;
+  display:flex;flex-direction:column;gap:6px;
+}
+.prog-bg{height:3px;background:var(--border);border-radius:2px;overflow:hidden;}
+.prog-fill{height:100%;background:linear-gradient(to right,var(--accent),var(--accent2));width:0%;transition:width 0.05s;}
+.prog-row{display:flex;justify-content:space-between;align-items:center;}
+.prog-km{font-size:11px;color:var(--muted);}
+.prog-pct{font-family:'Bebas Neue',sans-serif;font-size:14px;color:var(--accent);}
+
+/* ── コントロールボタン行 ── */
+.ctrl-row{display:flex;gap:8px;}
+.btn{flex:1;padding:14px 0;border:none;border-radius:12px;font-family:'Bebas Neue',sans-serif;font-size:17px;letter-spacing:2px;cursor:pointer;transition:all 0.2s;}
+.btn-p{background:var(--accent);color:var(--bg);}
+.btn-p:hover:not(:disabled){background:#f5ff6e;}
+.btn-p:disabled{background:var(--border);color:var(--muted);cursor:not-allowed;}
+.btn-s{background:transparent;color:var(--text);border:1px solid var(--border);flex:0 0 56px;padding:14px 0;}
+.btn-s:hover{background:var(--bg);}
+
+/* lbl */
+.lbl{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;}
+
+/* STATS */
+.stats{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;}
+.stat{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 6px;text-align:center;}
+.stat-v{font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--accent);line-height:1;}
+.stat-l{font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;}
+
+/* ELEV */
+.elev-wrap{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;}
+
+/* MAP STYLE */
+.mode-btns{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;}
+.mode-btn{padding:8px 4px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--muted);font-size:10px;cursor:pointer;transition:all 0.15s;text-align:center;}
+.mode-btn:hover{border-color:var(--muted);color:var(--text);}
+.mode-btn.active{border-color:var(--accent);color:var(--accent);background:rgba(232,255,71,0.06);}
+
+/* SPEED */
+.slider-row{display:flex;align-items:center;gap:10px;}
+.slider-row label{font-size:11px;color:var(--muted);white-space:nowrap;}
+input[type="range"]{-webkit-appearance:none;width:100%;height:4px;background:var(--border);border-radius:2px;outline:none;}
+input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;background:var(--accent);border-radius:50%;cursor:pointer;}
+.spd-lbl{font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--accent);min-width:32px;text-align:right;}
+
+/* DROPZONE */
+.dropzone{border:2px dashed var(--border);border-radius:12px;padding:16px;text-align:center;cursor:pointer;position:relative;}
+.dropzone:hover,.dropzone.over{border-color:var(--accent);background:rgba(232,255,71,0.03);}
+.dropzone .icon{font-size:24px;display:block;margin-bottom:4px;}
+.dropzone h3{font-size:13px;font-weight:500;}
+.dropzone p{font-size:10px;color:var(--muted);}
+input[type="file"]{position:absolute;inset:0;opacity:0;cursor:pointer;}
+
+/* TOAST */
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--surface);border:1px solid var(--accent);border-radius:9px;padding:10px 20px;font-size:12px;color:var(--text);z-index:9999;transition:transform 0.3s;white-space:nowrap;}
+.toast.on{transform:translateX(-50%) translateY(0);}
+
+/* ── デスクトップ: サイドバーレイアウトに戻す ── */
+@media(min-width:600px){
+  #map{
+    top:var(--header);left:320px;right:0;bottom:0;
+  }
+  .placeholder{
+    top:var(--header);left:320px;right:0;bottom:0;
+  }
+  .bottom-panel{
+    position:fixed;top:var(--header);left:0;bottom:0;
+    width:320px;border-radius:0;border-top:none;border-right:1px solid var(--border);
+    transform:none!important;
+    display:flex;flex-direction:column;
+  }
+  .panel-handle{display:none;}
+  .peek-area{order:10;padding:12px 16px;}
+  .panel-content{flex:1;overflow-y:auto;padding:12px 16px 16px;}
+  .stats{grid-template-columns:1fr 1fr;}
+  .ctrl-row{flex-direction:column;}
+  .btn-s{flex:0 0 auto;padding:11px 0;}
+  .av-float{top:calc(var(--header)+10px);left:330px;}
+  .toast{bottom:24px;}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">RIDE<em>·</em>REPLAY <span style="color:var(--muted);font-size:12px;letter-spacing:1px;">3D</span></div>
+  <div class="badge">✓ 無料・登録不要</div>
+</header>
+
+<!-- 地図 -->
+<div id="ph" class="placeholder">
+  <div class="big-icon">🚴</div>
+  <p>GPXファイルを選択すると<br>ルートが表示されます</p>
+</div>
+<div id="map"></div>
+
+<!-- 地図上アバター -->
+<div class="av-float" id="avFloat">
+  <div class="av-card">
+    <span class="av-emoji-lg" id="avEmoji">🚴</span>
+    <div class="av-sep"></div>
+    <div class="av-hr-row">
+      <span class="av-hr-icon">❤️</span>
+      <span class="av-hr-val" id="avHR">--</span>
+      <span class="av-hr-unit">bpm</span>
+    </div>
+    <div class="av-spd-row">
+      <span class="av-spd-val" id="avSpd">--</span>
+      <span class="av-spd-unit">km/h</span>
+    </div>
+    <div class="av-sep"></div>
+    <div class="av-status" id="avStatus">スタート</div>
+  </div>
+</div>
+
+<!-- 下部スライドパネル -->
+<div class="bottom-panel" id="panel">
+
+  <!-- ドラッグハンドル（モバイルのみ） -->
+  <div class="panel-handle" id="panelHandle" onclick="togglePanel()">
+    <div class="handle-bar"></div>
+    <div class="handle-label" id="handleLabel">▲ 詳細を開く</div>
+  </div>
+
+  <!-- peekエリア（常時見える） -->
+  <div class="peek-area">
+    <div class="ctrl-row">
+      <button class="btn btn-p" id="replayBtn" onclick="startReplay()" disabled>▶ リプレイ開始</button>
+      <button class="btn btn-s" onclick="resetReplay()">↺</button>
+    </div>
+    <div class="prog-bg"><div class="prog-fill" id="pFill"></div></div>
+    <div class="prog-row">
+      <span class="prog-km" id="pKm">0.0 / -- km</span>
+      <span class="prog-pct" id="pPct">0%</span>
+    </div>
+  </div>
+
+  <!-- スクロールコンテンツ -->
+  <div class="panel-content">
+
+    <div>
+      <div class="lbl">GPX ファイル</div>
+      <!-- 隠しinput: JSから直接クリック -->
+      <input type="file" id="fileIn" accept=".gpx" style="display:none;" onchange="loadFile(event)">
+      <!-- タップで確実に動くボタン -->
+      <button onclick="document.getElementById('fileIn').click()" style="
+        width:100%;padding:18px;border:2px dashed var(--border);border-radius:12px;
+        background:var(--bg);color:var(--text);font-size:15px;cursor:pointer;
+        display:flex;flex-direction:column;align-items:center;gap:6px;
+        -webkit-tap-highlight-color:rgba(232,255,71,0.1);">
+        <span style="font-size:28px;">📍</span>
+        <span style="font-weight:500;">GPXファイルを選択</span>
+        <span style="font-size:11px;color:var(--muted);">心拍データ付きGPXにも対応</span>
+      </button>
+      <!-- PC向けドロップゾーン -->
+      <div id="dz" style="display:none;"></div>
+    </div>
+
+    <div>
+      <div class="lbl">ライドデータ</div>
+      <div class="stats">
+        <div class="stat"><div class="stat-v" id="sDist">--</div><div class="stat-l">距離 km</div></div>
+        <div class="stat"><div class="stat-v" id="sElev">--</div><div class="stat-l">獲得標高 m</div></div>
+        <div class="stat"><div class="stat-v" id="sPts">--</div><div class="stat-l">地点数</div></div>
+        <div class="stat"><div class="stat-v" id="sMaxHR">--</div><div class="stat-l">最大心拍</div></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="lbl">標高プロファイル（● 現在地）</div>
+      <div class="elev-wrap">
+        <canvas id="ec" style="width:100%;height:52px;display:block;"></canvas>
+      </div>
+    </div>
+
+    <div>
+      <div class="lbl">マップスタイル</div>
+      <div class="mode-btns">
+        <button class="mode-btn active" onclick="setStyle('osm',this)">🗺 標準</button>
+        <button class="mode-btn" onclick="setStyle('topo',this)">🏔 地形</button>
+        <button class="mode-btn" onclick="setStyle('dark',this)">🌑 ダーク</button>
+        <button class="mode-btn" onclick="setStyle('satellite',this)">🛰 衛星</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="lbl">再生速度</div>
+      <div class="slider-row">
+        <label>速度</label>
+        <input type="range" id="spSlider" min="1" max="20" value="1" oninput="setSpeed(this.value)">
+        <span class="spd-lbl" id="spdVal">1×</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="lbl">ピコピコ音</div>
+      <div style="display:flex;gap:6px;">
+        <!-- ON/OFFボタン -->
+        <button id="soundBtn" onclick="toggleSound()" style="
+          flex:1;padding:12px;border:1px solid var(--border);border-radius:10px;
+          background:var(--bg);color:var(--muted);font-size:13px;cursor:pointer;
+          display:flex;align-items:center;justify-content:center;gap:6px;transition:all 0.2s;">
+          <span id="soundIcon">🔇</span>
+          <span id="soundLabel">音をON</span>
+        </button>
+        <!-- モード切替ボタン -->
+        <button id="soundModeBtn" onclick="toggleSoundMode()" style="
+          flex:1;padding:12px;border:1px solid var(--border);border-radius:10px;
+          background:var(--bg);color:var(--muted);font-size:12px;cursor:pointer;
+          display:flex;align-items:center;justify-content:center;gap:5px;transition:all 0.2s;">
+          <span id="soundModeIcon">🚴</span>
+          <span id="soundModeLabel">スピード</span>
+        </button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── MAP ──
+let map=null,tileLayer=null,polyline=null,marker=null;
+const TILES={
+  osm:      ['https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png','© OpenStreetMap'],
+  topo:     ['https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png','© OpenTopoMap'],
+  dark:     ['https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png','© CARTO'],
+  satellite:['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}','© Esri']
+};
+
+// ── DATA ──
+let gpx=[],cumDist=[],totalDist=0;
+let hasHR=false,hasTime=false,minEle=0,maxEle=0;
+
+// ── REPLAY ──
+let rafId=null,progress=0,speed=1,isPlaying=false,lastTs=null;
+let dispHR=0,dispSpd=0;
+const EMA=0.04;
+const BASE_FACTOR=1/600000; // 1×=約10分
+let currentStyle='osm';
+
+// ── PANEL TOGGLE ──
+let panelOpen=false;
+function togglePanel(){
+  panelOpen=!panelOpen;
+  document.getElementById('panel').classList.toggle('open',panelOpen);
+  document.getElementById('handleLabel').textContent=panelOpen?'▼ 閉じる':'▲ 詳細を開く';
+}
+
+// ── DRAG & DROP ──
+// ドロップはmap全体で受け付ける
+document.body.addEventListener('dragover',e=>{e.preventDefault();});
+document.body.addEventListener('drop',e=>{
+  e.preventDefault();
+  const f=e.dataTransfer.files[0];
+  if(f&&f.name.endsWith('.gpx')) read(f);
+});
+function loadFile(e){const f=e.target.files[0];if(f)read(f);}
+function read(f){const r=new FileReader();r.onload=e=>parseGPX(e.target.result);r.readAsText(f);}
+
+// ── PARSE GPX ──
+function parseGPX(xml){
+  const clean=xml.replace(/\sxmlns="[^"]*"/g,'');
+  const doc=new DOMParser().parseFromString(clean,'application/xml');
+  let pts=doc.querySelectorAll('trkpt');
+  if(!pts.length) pts=doc.querySelectorAll('rtept');
+  if(!pts.length) pts=doc.querySelectorAll('wpt');
+  if(!pts.length){showToast('⚠ ポイントが見つかりませんでした');return;}
+  gpx=[];hasHR=false;hasTime=false;
+  pts.forEach(p=>{
+    const lat=parseFloat(p.getAttribute('lat'));
+    const lon=parseFloat(p.getAttribute('lon'));
+    if(isNaN(lat)||isNaN(lon)) return;
+    const ele=p.querySelector('ele')?parseFloat(p.querySelector('ele').textContent):0;
+    const t=p.querySelector('time')?new Date(p.querySelector('time').textContent):null;
+    if(t&&!isNaN(t)) hasTime=true;
+    let hr=null;
+    const hrEl=p.querySelector('hr')||p.querySelector('gpxtpx\\:hr')||p.querySelector('ns3\\:hr');
+    if(hrEl){hr=parseInt(hrEl.textContent);if(!isNaN(hr)&&hr>0)hasHR=true;else hr=null;}
+    gpx.push({lat,lon,ele,t,hr});
+  });
+  if(gpx.length<2){showToast('⚠ ポイントが少なすぎます');return;}
+  cumDist=[0];
+  for(let i=1;i<gpx.length;i++) cumDist.push(cumDist[i-1]+hav(gpx[i-1],gpx[i]));
+  totalDist=cumDist[cumDist.length-1];
+  const eles=gpx.map(p=>p.ele);
+  minEle=Math.min(...eles);maxEle=Math.max(...eles);
+  updateStats();drawChart(0);initMap();
+  progress=0;dispHR=0;dispSpd=0;
+  document.getElementById('replayBtn').disabled=false;
+  showToast(`✅ ${gpx.length}点読込！${hasHR?'❤️ 心拍あり':''}${hasTime?' ⏱時刻あり':''}`);
+  // モバイル: ファイル読込後パネルを閉じて地図を広く見せる
+  if(window.innerWidth<600&&panelOpen) togglePanel();
+}
+
+function updateStats(){
+  document.getElementById('sDist').textContent=totalDist.toFixed(1);
+  document.getElementById('sPts').textContent=gpx.length;
+  let gain=0;
+  for(let i=1;i<gpx.length;i++){const d=gpx[i].ele-gpx[i-1].ele;if(d>0)gain+=d;}
+  document.getElementById('sElev').textContent=Math.round(gain);
+  if(hasHR){const mx=Math.max(...gpx.map(p=>p.hr||0));document.getElementById('sMaxHR').textContent=mx||'--';}
+  else document.getElementById('sMaxHR').textContent='--';
+  document.getElementById('pKm').textContent='0.0 / '+totalDist.toFixed(1)+' km';
+}
+
+function hav(a,b){
+  const R=6371,dLat=(b.lat-a.lat)*Math.PI/180,dLon=(b.lon-a.lon)*Math.PI/180;
+  const x=Math.sin(dLat/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLon/2)**2;
+  return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+}
+
+// ── ELEVATION CHART ──
+function drawChart(prog){
+  const canvas=document.getElementById('ec');
+  const dpr=window.devicePixelRatio||1;
+  const w=canvas.parentElement.clientWidth-16,h=52;
+  if(canvas.width!==Math.round(w*dpr)){
+    canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);
+    canvas.style.width=w+'px';canvas.style.height=h+'px';
+  }
+  const ctx=canvas.getContext('2d');
+  ctx.save();ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  const eles=gpx.map(p=>p.ele);
+  const mn=Math.min(...eles),mx=Math.max(...eles),rng=mx-mn||1;
+  const yOf=e=>h-((e-mn)/rng)*(h-10)-5;
+  const g=ctx.createLinearGradient(0,0,0,h);
+  g.addColorStop(0,'rgba(232,255,71,0.35)');g.addColorStop(1,'rgba(232,255,71,0.02)');
+  ctx.beginPath();
+  gpx.forEach((p,i)=>{const x=(i/(gpx.length-1))*w,y=yOf(p.ele);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
+  ctx.lineTo(w,h);ctx.lineTo(0,h);ctx.closePath();ctx.fillStyle=g;ctx.fill();
+  ctx.beginPath();
+  gpx.forEach((p,i)=>{const x=(i/(gpx.length-1))*w,y=yOf(p.ele);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
+  ctx.strokeStyle='rgba(232,255,71,0.9)';ctx.lineWidth=1.5;ctx.stroke();
+  if(prog>0){
+    const fi=prog*(gpx.length-1);
+    const i0=Math.floor(fi),i1=Math.min(i0+1,gpx.length-1),t=fi-i0;
+    const curEle=lerp(gpx[i0].ele,gpx[i1].ele,t);
+    const cx=prog*w,cy=yOf(curEle);
+    ctx.beginPath();ctx.moveTo(cx,0);ctx.lineTo(cx,h);
+    ctx.strokeStyle='rgba(255,107,53,0.5)';ctx.lineWidth=1.5;ctx.setLineDash([3,3]);ctx.stroke();ctx.setLineDash([]);
+    ctx.beginPath();ctx.arc(cx,cy,4.5,0,Math.PI*2);
+    ctx.fillStyle='#ff6b35';ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ── MAP ──
+function initMap(){
+  document.getElementById('ph').classList.add('hidden');
+  if(map){map.remove();map=null;tileLayer=null;}
+  map=L.map('map',{preferCanvas:true,zoomControl:true});
+  applyTile(currentStyle);
+  const lls=gpx.map(p=>[p.lat,p.lon]);
+  L.polyline(lls,{color:'#e8ff47',weight:12,opacity:0.07}).addTo(map);
+  polyline=L.polyline(lls,{color:'#e8ff47',weight:3,opacity:0.95}).addTo(map);
+  L.circleMarker([gpx[0].lat,gpx[0].lon],{radius:8,color:'#e8ff47',fillColor:'#e8ff47',fillOpacity:1,weight:2}).bindPopup('🚦 スタート').addTo(map);
+  const last=gpx[gpx.length-1];
+  L.circleMarker([last.lat,last.lon],{radius:8,color:'#ff6b35',fillColor:'#ff6b35',fillOpacity:1,weight:2}).bindPopup('🏁 ゴール').addTo(map);
+  map.fitBounds(polyline.getBounds(),{padding:[40,40]});
+  setTimeout(()=>map.invalidateSize(),200);
+}
+function applyTile(key){
+  if(tileLayer){tileLayer.remove();tileLayer=null;}
+  const[url,attr]=TILES[key];
+  tileLayer=L.tileLayer(url,{maxZoom:19,subdomains:'abc',attribution:attr}).addTo(map);
+}
+function setStyle(key,btn){
+  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');currentStyle=key;if(map)applyTile(key);
+}
+function setSpeed(v){speed=parseInt(v);document.getElementById('spdVal').textContent=v+'×';}
+
+// ── マップ上ライダーマーカー ──
+const TOTAL_H=90,BAR_W=12;
+function createMarkerEl(emoji,elePct){
+  const wrap=document.createElement('div');
+  wrap.style.cssText=`position:relative;width:36px;height:${TOTAL_H}px;`;
+  const pct=Math.max(4,elePct);
+  wrap.innerHTML=`
+    <div id="riderBarBg" style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);
+      width:${BAR_W}px;height:100%;background:rgba(0,0,0,0.25);border-radius:6px 6px 0 0;overflow:hidden;">
+      <div id="riderBarFill" style="position:absolute;bottom:0;width:100%;height:${pct}%;
+        background:linear-gradient(to top,#ff6b35,#e8ff47);border-radius:6px 6px 0 0;
+        transition:height 0.35s cubic-bezier(.4,0,.2,1);"></div>
+    </div>
+    <div id="riderEmoji" style="position:absolute;left:50%;bottom:${pct}%;
+      transform:translateX(-50%);
+      filter:drop-shadow(0 0 8px rgba(232,255,71,0.95));
+      transition:bottom 0.35s cubic-bezier(.4,0,.2,1);
+      white-space:nowrap;display:flex;flex-direction:column;align-items:center;gap:1px;">
+      <span id="riderSpd" style="font-family:'Bebas Neue',sans-serif;font-size:12px;
+        color:#e8ff47;background:rgba(0,0,0,0.55);border-radius:4px;padding:1px 5px;
+        line-height:1.4;letter-spacing:0.5px;"></span>
+      <span id="riderEmojiChar" style="font-size:24px;line-height:1;">${emoji}</span>
+    </div>`;
+  return wrap;
+}
+function updateMarkerEl(emoji,elePct,spd){
+  const fillEl=document.getElementById('riderBarFill');
+  const emojiEl=document.getElementById('riderEmoji');
+  const emojiChar=document.getElementById('riderEmojiChar');
+  const spdEl=document.getElementById('riderSpd');
+  if(!fillEl||!emojiEl) return;
+  if(emojiChar) emojiChar.textContent=emoji;
+  if(spdEl) spdEl.textContent=(hasTime&&spd>0.5)?Math.round(spd)+'':'';
+  const pct=Math.max(4,elePct);
+  fillEl.style.height=pct+'%';
+  emojiEl.style.bottom=pct+'%';
+}
+
+// ── REPLAY ──
+function startReplay(){
+  if(!gpx.length) return;
+  if(rafId){cancelAnimationFrame(rafId);rafId=null;}
+  progress=0;lastTs=null;isPlaying=true;dispHR=0;dispSpd=0;
+  document.getElementById('replayBtn').disabled=true;
+  document.getElementById('avFloat').classList.add('on');
+  stopBeep(); lastBeepSpd=-1;
+  if(marker){marker.remove();marker=null;}
+  const initPct=getElePct(gpx[0].ele);
+  const initEmoji=getEmoji(0,initPct);
+  const mEl=createMarkerEl(initEmoji,initPct);
+  const icon=L.divIcon({html:mEl,className:'',iconSize:[36,TOTAL_H],iconAnchor:[18,TOTAL_H]});
+  marker=L.marker([gpx[0].lat,gpx[0].lon],{icon,zIndexOffset:1000}).addTo(map);
+  // モバイル: 再生開始でパネルを閉じる
+  if(window.innerWidth<600&&panelOpen) togglePanel();
+  rafId=requestAnimationFrame(loop);
+}
+
+function loop(ts){
+  if(!isPlaying) return;
+  if(!lastTs) lastTs=ts;
+  const dt=Math.min(ts-lastTs,100);lastTs=ts;
+  progress+=dt*speed*BASE_FACTOR;
+  if(progress>=1){progress=1;renderFrame(1);finish();return;}
+  renderFrame(progress);
+  rafId=requestAnimationFrame(loop);
+}
+function lerp(a,b,t){return a+(b-a)*t;}
+function getElePct(ele){const r=maxEle-minEle||1;return Math.max(0,Math.min(100,((ele-minEle)/r)*100));}
+function getEmoji(hr,elePct){
+  // 😑→😀→🥵→😡→💀 の5段階
+  if(hasHR&&hr>0){
+    if(hr>=180) return '💀';
+    if(hr>=160) return '😡';
+    if(hr>=145) return '🥵';
+    if(hr>=125) return '😀';
+    return '😑';
+  }
+  if(elePct>75) return '💀';
+  if(elePct>55) return '😡';
+  if(elePct>35) return '🥵';
+  if(elePct>15) return '😀';
+  return '😑';
+}
+function getStatus(hr,elePct){
+  if(hasHR&&hr>0){
+    if(hr>=180) return '最大心拍域！';if(hr>=165) return 'VO2Max域';if(hr>=150) return '無酸素域';
+    if(hr>=135) return '有酸素域';if(hr>=115) return '脂肪燃焼域';return 'ウォームアップ';
+  }
+  if(elePct>75) return '高地';if(elePct>40) return '登り坂';return '平坦';
+}
+
+function renderFrame(prog){
+  const fi=prog*(gpx.length-1);
+  const i0=Math.floor(fi),i1=Math.min(i0+1,gpx.length-1),t=fi-i0;
+  const lat=lerp(gpx[i0].lat,gpx[i1].lat,t);
+  const lon=lerp(gpx[i0].lon,gpx[i1].lon,t);
+  const ele=lerp(gpx[i0].ele,gpx[i1].ele,t);
+  const rawHR=hasHR?lerp(gpx[i0].hr||0,gpx[i1].hr||0,t):0;
+  const traveled=lerp(cumDist[i0],cumDist[i1],t);
+  let rawSpd=0;
+  if(hasTime&&i0!==i1&&gpx[i0].t&&gpx[i1].t){
+    const d=hav(gpx[i0],gpx[i1]);const dt2=(gpx[i1].t-gpx[i0].t)/3600000;
+    if(dt2>0) rawSpd=d/dt2;
+  }
+  dispHR=dispHR+EMA*(rawHR-dispHR);
+  dispSpd=dispSpd+EMA*(rawSpd-dispSpd);
+  const elePct=getElePct(ele);
+  const emoji=getEmoji(Math.round(dispHR),elePct);
+  const status=getStatus(Math.round(dispHR),elePct);
+
+  if(marker) marker.setLatLng([lat,lon]);
+  updateMarkerEl(emoji,elePct,dispSpd);
+  map.setView([lat,lon],map.getZoom(),{animate:false});
+  drawChart(prog);
+
+  // アバターパネル
+  document.getElementById('avEmoji').textContent=emoji;
+  document.getElementById('avStatus').textContent=status;
+  document.getElementById('avHR').textContent=(hasHR&&dispHR>5)?Math.round(dispHR):'--';
+  document.getElementById('avSpd').textContent=(hasTime&&dispSpd>0.5)?Math.round(dispSpd):'--';
+  // ピコピコ音更新
+  if(soundMode==='hr'){
+    // 心拍モード: 40〜220bpmを0〜180km/h相当にマッピング
+    const hrVal = hasHR ? dispHR : 0;
+    const hrNorm = Math.max(0, (hrVal-40)/180); // 40bpm=0, 220bpm=1
+    updateBeep(hrNorm*80, 'hr', hrVal);
+  } else {
+    const spdForBeep = hasTime ? dispSpd : (getElePct(lerp(gpx[Math.floor(prog*(gpx.length-1))].ele, gpx[Math.min(Math.floor(prog*(gpx.length-1))+1,gpx.length-1)].ele, prog*(gpx.length-1)-Math.floor(prog*(gpx.length-1))))/100)*40;
+    updateBeep(spdForBeep, 'spd', spdForBeep);
+  }
+
+  const pct=Math.round(prog*100);
+  document.getElementById('pFill').style.width=pct+'%';
+  document.getElementById('pPct').textContent=pct+'%';
+  document.getElementById('pKm').textContent=traveled.toFixed(1)+' / '+totalDist.toFixed(1)+' km';
+}
+
+function finish(){
+  isPlaying=false;
+  document.getElementById('avEmoji').textContent='🏁';
+  document.getElementById('avStatus').textContent='ゴール！';
+  document.getElementById('replayBtn').disabled=false;
+  stopBeep(); lastBeepSpd=-1;
+  showToast('🏁 リプレイ完了！お疲れ様でした！');
+}
+function resetReplay(){
+  isPlaying=false;
+  if(rafId){cancelAnimationFrame(rafId);rafId=null;}
+  progress=0;lastTs=null;dispHR=0;dispSpd=0;
+  stopBeep(); lastBeepSpd=-1;
+  if(marker){marker.remove();marker=null;}
+  document.getElementById('avFloat').classList.remove('on');
+  document.getElementById('pFill').style.width='0%';
+  document.getElementById('pPct').textContent='0%';
+  document.getElementById('pKm').textContent='0.0 / '+totalDist.toFixed(1)+' km';
+  if(gpx.length){document.getElementById('replayBtn').disabled=false;drawChart(0);}
+  if(map&&polyline) map.fitBounds(polyline.getBounds(),{padding:[40,40]});
+}
+// ── SOUND ENGINE ──
+let audioCtx=null, soundOn=false, soundMode='spd', beepTimer=null, lastBeepSpd=-1;
+
+function toggleSound(){
+  soundOn=!soundOn;
+  document.getElementById('soundIcon').textContent = soundOn ? '🔊' : '🔇';
+  document.getElementById('soundLabel').textContent = soundOn ? '音をOFFにする' : '音をONにする';
+  document.getElementById('soundBtn').style.borderColor = soundOn ? 'var(--accent)' : 'var(--border)';
+  document.getElementById('soundBtn').style.color = soundOn ? 'var(--accent)' : 'var(--muted)';
+  if(!soundOn){ stopBeep(); }
+}
+
+function toggleSoundMode(){
+  soundMode = soundMode==='spd' ? 'hr' : 'spd';
+  const isHR = soundMode==='hr';
+  document.getElementById('soundModeIcon').textContent = isHR ? '❤️' : '🚴';
+  document.getElementById('soundModeLabel').textContent = isHR ? '心拍数' : 'スピード';
+  document.getElementById('soundModeBtn').style.borderColor = isHR ? 'var(--hr-col)' : 'var(--border)';
+  document.getElementById('soundModeBtn').style.color = isHR ? 'var(--hr-col)' : 'var(--muted)';
+  lastBeepSpd=-1; // 即座に再スケジュール
+}
+
+function getAudioCtx(){
+  if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  if(audioCtx.state==='suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+function playBeep(freq, dur){
+  try{
+    const ctx = getAudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime+dur);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime+dur);
+  }catch(e){}
+}
+
+function stopBeep(){
+  if(beepTimer){ clearTimeout(beepTimer); beepTimer=null; }
+}
+
+function scheduleBeep(normVal, mode, rawVal){
+  stopBeep();
+  if(!soundOn || !isPlaying) return;
+  const clamped = Math.max(0, Math.min(80, normVal));
+  const interval = clamped < 1 ? 0 : Math.round(2000 - (clamped/80)*1900);
+  if(interval <= 0) return;
+  let freq;
+  if(mode==='hr'){
+    // 心拍モード: 低心拍=低音ゆっくり、高心拍=高音はやく
+    freq = Math.round(220 + (clamped/80)*880); // 220Hz〜1100Hz
+  } else {
+    freq = Math.round(300 + (clamped/80)*900); // 300Hz〜1200Hz
+  }
+  playBeep(freq, 0.04);
+  beepTimer = setTimeout(()=>scheduleBeep(normVal, mode, rawVal), interval);
+}
+
+function updateBeep(normVal, mode, rawVal){
+  if(!soundOn || !isPlaying){ stopBeep(); return; }
+  if(Math.abs(normVal - lastBeepSpd) > 1.5){
+    lastBeepSpd = normVal;
+    scheduleBeep(normVal, mode, rawVal);
+  }
+}
+
+function showToast(msg){
+  const t=document.getElementById('toast');t.textContent=msg;t.classList.add('on');
+  setTimeout(()=>t.classList.remove('on'),3500);
+}
+// ウィンドウリサイズ時に地図を再計算
+window.addEventListener('resize',()=>{ if(map) setTimeout(()=>map.invalidateSize(),100); });
+</script>
+</body>
+</html>
